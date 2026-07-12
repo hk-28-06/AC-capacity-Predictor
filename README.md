@@ -2,7 +2,7 @@
 
 A machine-learning web application that predicts the required Air Conditioner
 capacity (in Tons of Refrigeration) for a room, based on its physical and
-environmental characteristics.
+environmental characteristics. - Hemanth Kumar A
 
 Built for a college ML project — clean UI, transparent model, real dataset.
 
