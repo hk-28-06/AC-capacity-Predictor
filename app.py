@@ -184,8 +184,8 @@ def stepper_slider(label, min_val, max_val, default, step, key):
         st.session_state[key] = min(max_val, round(st.session_state[key] + step, 2))
 
     c_minus, c_slider, c_plus = st.columns([1, 6, 1])
-    c_minus.button("➖", key=f"{key}_dec", on_click=_dec, use_container_width=True)
-    c_plus.button("➕", key=f"{key}_inc", on_click=_inc, use_container_width=True)
+    c_minus.button("-", key=f"{key}_dec", on_click=_dec, use_container_width=True)
+    c_plus.button("+", key=f"{key}_inc", on_click=_inc, use_container_width=True)
     c_slider.slider(label, min_val, max_val, step=step, key=key)
     return st.session_state[key]
 
