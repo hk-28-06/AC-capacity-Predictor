@@ -172,6 +172,22 @@ def render_gauge(value, vmin=0.5, vmax=4.0):
     """
     return svg
 
+def stepper_slider(label, min_val, max_val, default, step, key):
+    """A slider with -/+ buttons on either side that nudge the value by `step`."""
+    if key not in st.session_state:
+        st.session_state[key] = default
+
+    def _dec():
+        st.session_state[key] = max(min_val, round(st.session_state[key] - step, 2))
+
+    def _inc():
+        st.session_state[key] = min(max_val, round(st.session_state[key] + step, 2))
+
+    c_minus, c_slider, c_plus = st.columns([1, 6, 1])
+    c_minus.button("➖", key=f"{key}_dec", on_click=_dec, use_container_width=True)
+    c_plus.button("➕", key=f"{key}_inc", on_click=_inc, use_container_width=True)
+    c_slider.slider(label, min_val, max_val, step=step, key=key)
+    return st.session_state[key]
 
 # --------------------------------------------------------------------------
 # HERO HEADER
@@ -201,18 +217,15 @@ with tab_predict:
         st.subheader("Room & Environment Parameters")
         c1, c2 = st.columns(2)
         with c1:
-            area = st.slider("Room Area (m²)", 5.0, 120.0, 30.0, 0.5)
-            height = st.slider("Room Height (m)", 2.2, 4.5, 3.0, 0.1)
-            occupancy = st.slider("Occupancy (people)", 1, 15, 4)
-            temperature = st.slider("Outdoor Temperature (°C)", 15.0, 48.0, 34.0, 0.5)
+            area = stepper_slider("Room Area (m²)", 5.0, 120.0, 30.0, 0.5, key="area")
+            height = stepper_slider("Room Height (m)", 2.2, 4.5, 3.0, 0.5, key="height")
+            occupancy = stepper_slider("Occupancy (people)", 1, 15, 4, 1, key="occupancy")
+            temperature = stepper_slider("Outdoor Temperature (°C)", 15.0, 48.0, 34.0, 0.5, key="temperature")
         with c2:
-            window = st.slider("Window Area (m²)", 0.5, 20.0, 6.0, 0.5)
-            equipment = st.slider("Equipment Load (kW)", 0.0, 4.0, 1.0, 0.1)
-            insulation = st.select_slider("Insulation Level", options=[1, 2, 3, 4, 5], value=3)
-            sun = st.select_slider(
-                "Sun Exposure", options=[1, 2, 3],
-                value=2, format_func=lambda x: {1: "Low", 2: "Medium", 3: "High"}[x],
-            )
+            window = stepper_slider("Window Area (m²)", 0.5, 20.0, 6.0, 0.5, key="window")
+            equipment = stepper_slider("Equipment Load (kW)", 0.0, 4.0, 1.0, 0.5, key="equipment")
+            insulation = stepper_slider("Insulation Level (1-5)", 1, 5, 3, 1, key="insulation")
+            sun = stepper_slider("Sun Exposure (1=Low, 2=Med, 3=High)", 1, 3, 2, 1, key="sun")
 
         st.button("⚡ Predict AC Capacity", use_container_width=True, type="primary")
 
