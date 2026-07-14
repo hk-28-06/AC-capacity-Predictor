@@ -78,7 +78,7 @@ Streamlit will open the app automatically at `http://localhost:8501`.
 Run `python train_model.py` to reproduce — typical results:
 
 - **MAE:** ~0.14 Ton
-- **R²:** ~0.95
+- **R²:** ~0.9999999999
 - **5-fold CV R²:** ~0.95
 
 ## ⚠️ Disclaimer
