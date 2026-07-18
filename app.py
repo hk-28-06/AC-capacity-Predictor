@@ -130,20 +130,21 @@ FEATURE_LABELS = {
 # --------------------------------------------------------------------------
 @st.cache_data
 def load_data():
-    return pd.read_csv("data/AC_Capacity_Dataset_2000.csv")
+    return pd.read_csv("data/AC_Capacity_Dataset_50000.csv")
 
 
 @st.cache_resource
 def load_models():
     lin_model = joblib.load("model/linear_model.pkl")
     rf_model = joblib.load("model/rf_model.pkl")
+    et_model = joblib.load("model/extratrees_model.pkl")
     with open("model/artifact.json") as f:
         artifact = json.load(f)
-    return lin_model, rf_model, artifact
+    return lin_model, rf_model, et_model, artifact
 
 
 df = load_data()
-lin_model, rf_model, artifact = load_models()
+lin_model, rf_model, et_model, artifact = load_models()
 
 
 def recommend_size(predicted_ton: float) -> float:
@@ -172,6 +173,30 @@ def render_gauge(value, vmin=0.5, vmax=4.0):
     """
     return svg
 
+
+# --------------------------------------------------------------------------
+# STEPPER SLIDER — a slider paired with -/+ buttons for precise nudging
+# --------------------------------------------------------------------------
+def stepper_slider(label, min_val, max_val, default, step, key):
+    """A slider with -/+ buttons on either side that nudge the value by `step`."""
+    if key not in st.session_state:
+        st.session_state[key] = default
+
+    def _dec():
+        st.session_state[key] = max(min_val, round(st.session_state[key] - step, 2))
+
+    def _inc():
+        st.session_state[key] = min(max_val, round(st.session_state[key] + step, 2))
+
+    c_minus, c_slider, c_plus = st.columns([1, 6, 1])
+    c_minus.button("➖", key=f"{key}_dec", on_click=_dec, use_container_width=True)
+    c_plus.button("➕", key=f"{key}_inc", on_click=_inc, use_container_width=True)
+    # NOTE: no `value=` argument here — since `key` already exists in
+    # session_state, the slider automatically reads/writes that value.
+    c_slider.slider(label, min_val, max_val, step=step, key=key)
+    return st.session_state[key]
+
+
 # --------------------------------------------------------------------------
 # HERO HEADER
 # --------------------------------------------------------------------------
@@ -186,9 +211,77 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-tab_predict, tab_perf, tab_data, tab_about = st.tabs(
-    ["🔮  Predict", "📊  Model Performance", "🔍  Dataset Explorer", "ℹ️  About"]
+tab_home, tab_predict, tab_perf, tab_data, tab_about = st.tabs(
+    ["🏠  Home", "🔮  Predict", "📊  Model Performance", "🔍  Dataset Explorer", "ℹ️  About"]
 )
+
+# ==========================================================================
+# TAB 0 — HOME
+# ==========================================================================
+with tab_home:
+    lm_home = artifact["linear_metrics"]
+    em_home = artifact["et_metrics"]
+
+    h1, h2, h3, h4 = st.columns(4)
+    for col, label, val in zip(
+        [h1, h2, h3, h4],
+        ["Best R² Score", "Lowest MAE", "Training Samples", "Room Features Used"],
+        [f"{em_home['R2']*100:.1f}%", f"{em_home['MAE']:.3f} Ton",
+         f"{artifact['n_samples']:,}", f"{len(FEATURES)}"],
+    ):
+        col.markdown(f"""
+        <div class="metric-card">
+            <div class="label">{label}</div>
+            <div class="value">{val}</div>
+        </div>""", unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    col_left, col_right = st.columns([1.1, 1], gap="large")
+    with col_left:
+        st.markdown("#### What is \"AC Capacity\"?")
+        st.markdown("""
+An air conditioner's **capacity** is measured in **Tons of Refrigeration** —
+one ton equals about **12,000 BTU/hr** of heat removal (a unit borrowed from
+how much heat it takes to melt one ton of ice in 24 hours).
+
+**Why the right size actually matters:**
+- **Undersized** units run constantly, struggle to cool the room, and wear
+  out faster from the non-stop workload.
+- **Oversized** units cool the room too quickly without running long enough
+  to remove humidity — leaving the room cold but clammy — and cycle on/off
+  more often, which wastes electricity and stresses the compressor.
+
+Correct sizing depends on far more than just room area — occupancy, sun
+exposure, insulation quality, equipment heat output, and outdoor temperature
+all add or remove real cooling load. That's exactly the relationship this
+tool learns from data instead of a fixed rule of thumb.
+        """)
+
+    with col_right:
+        st.markdown("#### How This Tool Works")
+        st.markdown(f"""
+1. **Describe the room** — 8 parameters: area, height, occupancy, outdoor
+   temperature, window area, equipment load, insulation level, and sun exposure.
+2. **A trained model predicts tonnage** — Linear Regression, trained on
+   **{artifact['n_samples']:,} real-world-style room samples**, estimates the
+   cooling load in seconds.
+3. **Get a buyable recommendation** — the raw prediction is rounded to the
+   nearest 0.5-ton increment, matching how AC units are actually sold.
+4. **See the reasoning, not just the number** — a feature-by-feature
+   breakdown shows exactly why the model landed on that figure.
+
+Two additional models (Random Forest, Extra Trees) are trained on the same
+data purely as accuracy benchmarks — see the **Model Performance** tab for
+the full three-way comparison.
+        """)
+
+    st.divider()
+    st.markdown(
+        f"👉 Head to the **Predict** tab to try it on your own room, or "
+        f"**Model Performance** to see how the {em_home['R2']*100:.1f}% accuracy figure "
+        f"was measured."
+    )
 
 # ==========================================================================
 # TAB 1 — PREDICT
@@ -200,18 +293,15 @@ with tab_predict:
         st.subheader("Room & Environment Parameters")
         c1, c2 = st.columns(2)
         with c1:
-            area = st.slider("Room Area (m²)", 5.0, 120.0, 30.0, 0.5)
-            height = st.slider("Room Height (m)", 2.2, 4.5, 3.0, 0.1)
-            occupancy = st.slider("Occupancy (people)", 1, 15, 4)
-            temperature = st.slider("Outdoor Temperature (°C)", 15.0, 48.0, 34.0, 0.5)
+            area = stepper_slider("Room Area (m²)", 5.0, 120.0, 30.0, 0.5, key="area")
+            height = stepper_slider("Room Height (m)", 2.2, 4.5, 3.0, 0.5, key="height")
+            occupancy = stepper_slider("Occupancy (people)", 1, 15, 4, 1, key="occupancy")
+            temperature = stepper_slider("Outdoor Temperature (°C)", 15.0, 48.0, 34.0, 0.5, key="temperature")
         with c2:
-            window = st.slider("Window Area (m²)", 0.5, 20.0, 6.0, 0.5)
-            equipment = st.slider("Equipment Load (kW)", 0.0, 4.0, 1.0, 0.1)
-            insulation = st.select_slider("Insulation Level", options=[1, 2, 3, 4, 5], value=3)
-            sun = st.select_slider(
-                "Sun Exposure", options=[1, 2, 3],
-                value=2, format_func=lambda x: {1: "Low", 2: "Medium", 3: "High"}[x],
-            )
+            window = stepper_slider("Window Area (m²)", 0.5, 20.0, 6.0, 0.5, key="window")
+            equipment = stepper_slider("Equipment Load (kW)", 0.0, 4.0, 1.0, 0.5, key="equipment")
+            insulation = stepper_slider("Insulation Level (1-5)", 1, 5, 3, 1, key="insulation")
+            sun = stepper_slider("Sun Exposure (1=Low, 2=Med, 3=High)", 1, 3, 2, 1, key="sun")
 
         st.button("⚡ Predict AC Capacity", use_container_width=True, type="primary")
 
@@ -222,6 +312,7 @@ with tab_predict:
     })
     prediction = float(lin_model.predict(new_room)[0])
     rf_prediction = float(rf_model.predict(new_room)[0])
+    et_prediction = float(et_model.predict(new_room)[0])
     recommended = recommend_size(prediction)
 
     with col_result:
@@ -234,8 +325,11 @@ with tab_predict:
         </div>
         """, unsafe_allow_html=True)
 
-        st.caption(f"Random Forest cross-check: **{rf_prediction:.2f} Ton** "
-                    f"(Δ {abs(prediction - rf_prediction):.2f} Ton vs. Linear model)")
+        st.caption(
+            f"Cross-check — Random Forest: **{rf_prediction:.2f} Ton** · "
+            f"Extra Trees: **{et_prediction:.2f} Ton** "
+            f"(Δ {abs(prediction - et_prediction):.2f} Ton vs. Linear model)"
+        )
 
     st.divider()
     st.markdown("##### How this number was produced")
@@ -272,6 +366,7 @@ with tab_perf:
 
     lm = artifact["linear_metrics"]
     rm = artifact["rf_metrics"]
+    em = artifact["et_metrics"]
 
     m1, m2, m3, m4 = st.columns(4)
     for col, label, val in zip(
@@ -287,10 +382,44 @@ with tab_perf:
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown(
-        f"For reference, a **Random Forest** benchmark achieves "
-        f"MAE **{rm['MAE']:.3f}**, R² **{rm['R2']:.3f}** — used here only to sanity-check "
-        f"the simpler, more interpretable Linear Regression model actually used for prediction."
+        f"**Linear Regression** (used for prediction) is the interpretable model — but "
+        f"how much accuracy does that transparency actually cost? Two benchmarks trained "
+        f"on the same {artifact['n_samples']:,}-row dataset: **Random Forest** reaches "
+        f"MAE **{rm['MAE']:.3f}** / R² **{rm['R2']*100:.2f}%**, and **Extra Trees** "
+        f"reaches MAE **{em['MAE']:.3f}** / R² **{em['R2']*100:.2f}%** — the strongest of "
+        f"the three, at the cost of being a 150-tree ensemble instead of one readable equation."
     )
+
+    st.markdown("##### Three-Model Comparison")
+    comp_df = pd.DataFrame({
+        "MAE": [lm["MAE"], rm["MAE"], em["MAE"]],
+        "RMSE": [lm["RMSE"], rm["RMSE"], em["RMSE"]],
+        "R²": [lm["R2"], rm["R2"], em["R2"]],
+    }, index=["Linear Regression", "Random Forest", "Extra Trees"])
+
+    cc1, cc2 = st.columns(2)
+    with cc1:
+        fig_c1, ax_c1 = plt.subplots(figsize=(5, 3.2))
+        colors_models = [PRIMARY, "#14b8a6", ACCENT]
+        ax_c1.bar(comp_df.index, comp_df["MAE"], color=colors_models)
+        ax_c1.set_ylabel("MAE (Ton) — lower is better", color="#CBD5E1", fontsize=9)
+        ax_c1.tick_params(colors="#CBD5E1", labelsize=8)
+        fig_c1.patch.set_alpha(0)
+        ax_c1.set_facecolor("none")
+        for spine in ax_c1.spines.values():
+            spine.set_color("#334155")
+        st.pyplot(fig_c1, use_container_width=True)
+    with cc2:
+        fig_c2, ax_c2 = plt.subplots(figsize=(5, 3.2))
+        ax_c2.bar(comp_df.index, comp_df["R²"] * 100, color=colors_models)
+        ax_c2.set_ylabel("R² (%) — higher is better", color="#CBD5E1", fontsize=9)
+        ax_c2.set_ylim(90, 100)
+        ax_c2.tick_params(colors="#CBD5E1", labelsize=8)
+        fig_c2.patch.set_alpha(0)
+        ax_c2.set_facecolor("none")
+        for spine in ax_c2.spines.values():
+            spine.set_color("#334155")
+        st.pyplot(fig_c2, use_container_width=True)
 
     col_scatter, col_resid = st.columns(2)
     y_test = np.array(artifact["y_test"])
@@ -386,18 +515,20 @@ with tab_data:
 # ==========================================================================
 with tab_about:
     st.subheader("About This Project")
-    st.markdown("""
+    st.markdown(f"""
 This application predicts the **required Air Conditioner capacity (in Tons of
-Refrigeration)** for a room, using a Linear Regression model trained on 2,000
-labeled samples describing each room's physical and environmental profile.
+Refrigeration)** for a room, using a Linear Regression model trained on
+**{artifact['n_samples']:,} labeled samples** describing each room's physical
+and environmental profile.
 
 **Pipeline**
 1. **Data** — `Room_Area, Room_Height, Occupancy, Outdoor_Temperature, Window_Area,
    Equipment_Load, Insulation_Level, Sun_Exposure → AC_Capacity_Ton`
 2. **Split** — 80/20 train/test split, `random_state=42` for reproducibility.
 3. **Model** — `sklearn.linear_model.LinearRegression`, cross-validated with 5-fold CV.
-4. **Benchmark** — a Random Forest Regressor trained alongside it purely to confirm
-   the linear model isn't missing strong non-linear structure in the data.
+4. **Benchmarks** — a Random Forest and an Extra Trees Regressor, trained on the
+   *same* data, purely to confirm the linear model isn't missing strong
+   non-linear structure that a more complex model could exploit.
 5. **Recommendation logic** — the raw prediction is rounded to the nearest
    0.5-ton increment (how AC units are actually sold) and clamped to the
    commercially available range **[1.0, 3.5] Ton**.
@@ -406,9 +537,12 @@ labeled samples describing each room's physical and environmental profile.
 HVAC sizing is a decision that needs to be explainable — a reviewer or
 technician should be able to see *why* a room needs a 2.0-ton unit and not a
 1.5-ton one. Linear Regression's coefficients make that reasoning fully
-transparent (see the *Model Performance* tab), while the Random Forest
-benchmark confirms we aren't sacrificing meaningful accuracy for that
-transparency.
+transparent (see the *Model Performance* tab). The Extra Trees benchmark does
+score higher (R² {artifact['et_metrics']['R2']*100:.2f}% vs. Linear's
+{artifact['linear_metrics']['R2']*100:.2f}%) — a real and honest gap — but it's
+a 150-tree ensemble with no single readable equation behind it. This app keeps
+Linear Regression as the actual predictor and uses the stronger models only as
+an accuracy ceiling to measure against.
 
 **Tech stack:** Python · pandas · scikit-learn · Streamlit · Matplotlib/Seaborn
 """)
@@ -418,3 +552,4 @@ transparency.
         "calculation (e.g. Manual J). Always have final sizing verified by a "
         "qualified HVAC professional before purchase or installation."
     )
+
